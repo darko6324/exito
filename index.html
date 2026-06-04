@@ -314,6 +314,7 @@ function updateAgentMeta(extra=''){const el=byId('agentMeta');if(!el)return;cons
 
 function fmtInt(n){return Math.round(n||0).toLocaleString('es-CO')}
 function fmtDec(n,d=1){return Number(n||0).toLocaleString('es-CO',{minimumFractionDigits:d,maximumFractionDigits:d})}
+function fmtHours(n){const v=Number(n||0);if(!isFinite(v)||Math.abs(v)>100000)return '0 h';const h=Math.floor(Math.max(0,v));const m=Math.round((Math.max(0,v)-h)*60);if(m===60)return (h+1)+' h';return h>0?`${h} h ${String(m).padStart(2,'0')} min`:`${m} min`}
 function fmtPct(n){return Number(n||0).toLocaleString('es-CO',{minimumFractionDigits:2,maximumFractionDigits:2})+'%'}
 function safeDiv(a,b){return b?a/b:0}
 function fmtDate(s){if(!s)return ''; const [y,m,d]=s.split('-'); return `${d}/${m}/${y}`}
@@ -323,45 +324,106 @@ function cleanKey(s){return norm(s).toUpperCase().replace(/[^A-Z0-9]+/g,' ').tri
 function cleanChain(s){const k=cleanKey(s); if(k.includes('CARULLA'))return 'Carulla'; if(k.includes('EXITO')||k.includes('XITO'))return 'Éxito'; if(k.includes('SURTIMAX'))return 'Surtimax'; if(k.includes('SUPER INTER')||k.includes('SUPERINTER'))return 'Super Inter'; return title(String(s||'Sin cadena'))}
 function cleanCity(s){const k=cleanKey(s); const map={BOGOTA:'Bogotá',MEDELLIN:'Medellín',CARTAGENA:'Cartagena',MANIZALES:'Manizales',BARRANQUILLA:'Barranquilla',CALI:'Cali'}; return map[k]||title(String(s||'Sin ciudad'))}
 function parseCSV(text){const rows=[];let row=[],cell='',q=false;for(let i=0;i<text.length;i++){const ch=text[i],nx=text[i+1];if(q){if(ch==='"'&&nx==='"'){cell+='"';i++}else if(ch==='"'){q=false}else{cell+=ch}}else{if(ch==='"'){q=true}else if(ch===','){row.push(cell);cell=''}else if(ch==='\n'){row.push(cell);rows.push(row);row=[];cell=''}else if(ch==='\r'){}else{cell+=ch}}}row.push(cell);rows.push(row);return rows.filter(r=>r.some(c=>String(c).trim()!==''))}
+function normalizeYear2026(rawYear){
+  // Regla de negocio 2026:
+  // Si en la fuente viene el año mal digitado como 206, 0206, 26 o 026,
+  // el BI lo interpreta como 2026. No modifica Google Sheets; solo normaliza en memoria.
+  const txt=String(rawYear??'').trim().replace(/[^0-9]/g,'');
+  let y=Number(txt || rawYear);
+  if(!Number.isFinite(y))return null;
+  if(['206','0206','00206','26','026','0026'].includes(txt))return 2026;
+  if(y===206 || y===260 || y===26)return 2026;
+  if(y>=0 && y<100)return 2000+y;
+  return y;
+}
 function parseDate(v){
   if(v==null||v==='')return null;
+  const build=(y,mo,d)=>{
+    y=normalizeYear2026(y);mo=Number(mo);d=Number(d);
+    if(y!==2026||mo<1||mo>12||d<1||d>31)return null;
+    const dt=new Date(y,mo-1,d);
+    if(dt.getFullYear()!==y||dt.getMonth()!==mo-1||dt.getDate()!==d)return null;
+    return `${y}-${String(mo).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+  };
   if(v instanceof Date && !isNaN(v)){
-    const y=v.getFullYear(),mo=v.getMonth()+1,d=v.getDate();
-    if(y===2026)return `${y}-${String(mo).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+    return build(v.getFullYear(),v.getMonth()+1,v.getDate());
   }
-  let s=String(v).trim().replace(/^\uFEFF/,'');
+  if(typeof v==='number'&&isFinite(v)){
+    if(v>30000){const dt=new Date(Date.UTC(1899,11,30)+v*86400000);return build(dt.getUTCFullYear(),dt.getUTCMonth()+1,dt.getUTCDate())}
+    return null;
+  }
+  let s=String(v).trim().replace(/^\uFEFF/,'').replace(/^'+|'+$/g,'');
   if(!s)return null;
-  let dm=s.match(/^Date\((\d{4}),\s*(\d{1,2}),\s*(\d{1,2})/);
-  if(dm){const y=+dm[1],mo=+dm[2]+1,d=+dm[3];if(y===2026)return `${y}-${String(mo).padStart(2,'0')}-${String(d).padStart(2,'0')}`;}
+
+  // Google Visualization puede entregar fechas como Date(2026,2,15) o, si la fuente tiene error, Date(206,2,15).
+  let dm=s.match(/^Date\((\d{1,5}),\s*(\d{1,2}),\s*(\d{1,2})/);
+  if(dm)return build(dm[1],+dm[2]+1,+dm[3]);
+
+  // Quita hora anexa para poder interpretar solo la fecha.
+  s=s.replace(/\s+\d{1,2}:\d{2}(:\d{2})?\s*$/,'').trim();
+
+  // Formatos explícitos: yyyy-mm-dd, yyyy/mm/dd, yyyy.mm.dd.
+  let m=s.match(/^(\d{1,5})[-\/.](\d{1,2})[-\/.](\d{1,2})/);
+  if(m)return build(m[1],+m[2],+m[3]);
+
+  // Formatos latinos: dd/mm/yyyy, dd-mm-yyyy, dd.mm.yyyy.
+  // Aquí se corrigen automáticamente años 206, 0206, 26 u 026 a 2026.
+  m=s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{1,5})/);
+  if(m)return build(m[3],+m[2],+m[1]);
+
+  // Intento nativo solo como respaldo; después vuelve a pasar por build(), que fuerza 2026.
   let nativeDate=Date.parse(s);
-  if(!isNaN(nativeDate)&&/[A-Za-z]{3,}|GMT|UTC|2026/.test(s)){const dt=new Date(nativeDate);const y=dt.getFullYear(),mo=dt.getMonth()+1,d=dt.getDate();if(y===2026)return `${y}-${String(mo).padStart(2,'0')}-${String(d).padStart(2,'0')}`;}
+  if(!isNaN(nativeDate)&&/[A-Za-z]{3,}|GMT|UTC|2026|0206|206|026|\/|-/.test(s)){
+    const dt=new Date(nativeDate);const built=build(dt.getFullYear(),dt.getMonth()+1,dt.getDate());if(built)return built;
+  }
+
   if(/^\d+(\.\d+)?$/.test(s)){
     const n=Number(s);
-    if(n>40000){const dt=new Date(Date.UTC(1899,11,30)+n*86400000);const y=dt.getUTCFullYear(),mo=dt.getUTCMonth()+1,d=dt.getUTCDate();if(y===2026)return `${y}-${String(mo).padStart(2,'0')}-${String(d).padStart(2,'0')}`}
+    if(n>30000){const dt=new Date(Date.UTC(1899,11,30)+n*86400000);const built=build(dt.getUTCFullYear(),dt.getUTCMonth()+1,dt.getUTCDate());if(built)return built;}
   }
-  s=s.replace(/\s+\d{1,2}:\d{2}(:\d{2})?\s*$/,'').trim();
-  let m=s.match(/^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})/);
-  if(m){const y=+m[1],mo=+m[2],d=+m[3];if(y===2026)return `${y}-${String(mo).padStart(2,'0')}-${String(d).padStart(2,'0')}`}
-  m=s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})/);
-  if(m){let d=+m[1],mo=+m[2],y=+m[3];if(y<100)y+=2000;if(y===2026)return `${y}-${String(mo).padStart(2,'0')}-${String(d).padStart(2,'0')}`}
+
   const mm={enero:1,ene:1,febrero:2,feb:2,marzo:3,mar:3,abril:4,abr:4,mayo:5,may:5,junio:6,jun:6,julio:7,jul:7,agosto:8,ago:8,septiembre:9,setiembre:9,sep:9,set:9,octubre:10,oct:10,noviembre:11,nov:11,diciembre:12,dic:12};
   const ns=norm(s).toLowerCase();
-  m=ns.match(/(\d{1,2})\s*(?:de\s*)?(enero|ene|febrero|feb|marzo|mar|abril|abr|mayo|may|junio|jun|julio|jul|agosto|ago|septiembre|setiembre|sep|set|octubre|oct|noviembre|nov|diciembre|dic)\s*(?:de\s*)?(\d{4})/);
-  if(m){const d=+m[1],mo=mm[m[2]],y=+m[3];if(y===2026)return `${y}-${String(mo).padStart(2,'0')}-${String(d).padStart(2,'0')}`}
-
+  m=ns.match(/(\d{1,2})\s*(?:de\s*)?(enero|ene|febrero|feb|marzo|mar|abril|abr|mayo|may|junio|jun|julio|jul|agosto|ago|septiembre|setiembre|sep|set|octubre|oct|noviembre|nov|diciembre|dic)\s*(?:de\s*)?(\d{1,5})/);
+  if(m)return build(m[3],mm[m[2]],+m[1]);
   m=ns.match(/(?:^|\b)(\d{1,2})\s*(?:de\s*)?(enero|ene|febrero|feb|marzo|mar|abril|abr|mayo|may|junio|jun|julio|jul|agosto|ago|septiembre|setiembre|sep|set|octubre|oct|noviembre|nov|diciembre|dic)(?:\b|$)/);
-  if(m){const d=+m[1],mo=mm[m[2]],y=2026;return `${y}-${String(mo).padStart(2,'0')}-${String(d).padStart(2,'0')}`}
+  if(m)return build(2026,mm[m[2]],+m[1]);
   m=ns.match(/(?:^|\b)(enero|ene|febrero|feb|marzo|mar|abril|abr|mayo|may|junio|jun|julio|jul|agosto|ago|septiembre|setiembre|sep|set|octubre|oct|noviembre|nov|diciembre|dic)\s*(\d{1,2})(?:\b|$)/);
-  if(m){const mo=mm[m[1]],d=+m[2],y=2026;return `${y}-${String(mo).padStart(2,'0')}-${String(d).padStart(2,'0')}`}
+  if(m)return build(2026,mm[m[1]],+m[2]);
   m=s.match(/^'?(\d{1,2})[\/\-.](\d{1,2})$/);
-  if(m){const d=+m[1],mo=+m[2],y=2026;if(mo>=1&&mo<=12&&d>=1&&d<=31)return `${y}-${String(mo).padStart(2,'0')}-${String(d).padStart(2,'0')}`}
+  if(m)return build(2026,+m[2],+m[1]);
   return null;
 }
 function dateParts(iso){const [y,m,d]=iso.split('-').map(Number);const dt=new Date(y,m-1,d);return {dt,wd:(dt.getDay()+6)%7,month:`${y}-${String(m).padStart(2,'0')}`,mes:monthNames[m],mesCorto:monthShort[m]}}
 function num(x){if(x==null)return 0;let s=String(x).trim();if(!s||s==='-'||s.toUpperCase()==='OO')return 0;s=s.replace(/\s/g,''); if(s.includes(',')&&s.includes('.'))s=s.replace(/\./g,'').replace(',','.'); else if(s.includes(','))s=s.replace(',','.'); const v=parseFloat(s.replace(/[^0-9.\-]/g,''));return isFinite(v)?v:0}
 function normalizeObs(s){let t=norm(s).toUpperCase();const rep={AISSTE:'ASISTE',ASISITE:'ASISTE',ASITIO:'ASISTIO',RECURSO:'RECURSO',MECANICA:'MECANICA',INCUPLIMIENTO:'INCUMPLIMIENTO'};for(const [a,b] of Object.entries(rep))t=t.replaceAll(a,b);return t}
 function displayText(s){const t=normalizeObs(s);return t?title(t):''}
-function parseHours(x){if(x==null||x==='')return 0;let s=String(x).trim().replace("'",'');if(!s||['-','OO','O','0','0:00','0_00'].includes(s.toUpperCase()))return 0;let m=s.match(/^(\d{1,2})[_:](\d{1,2})$/);if(m)return +m[1]+(+m[2]/60);let v=num(s);return v>=0&&v<=1?v*24:v}
+function parseHours(x){
+  if(x==null||x==='')return 0;
+  // Excel / SheetJS puede entregar las horas como objeto Date o como fracción de día.
+  if(x instanceof Date && !isNaN(x)){
+    return x.getHours()+x.getMinutes()/60+x.getSeconds()/3600;
+  }
+  if(typeof x==='number'&&isFinite(x)){
+    if(x>=0&&x<1)return x*24; // fracción de día de Excel / Google Sheets
+    if(x>=1&&x<=24)return x;  // horas decimales ya normalizadas
+    return 0;
+  }
+  let s=String(x).trim().replace(/^'+|'+$/g,'').replace(/,/g,'.');
+  if(!s||['-','_','OO','O','N/A','NA','SIN DATO','0','0:00','0_00','00:00'].includes(s.toUpperCase()))return 0;
+  let dm=s.match(/^Date\(\d{1,4},\s*\d{1,2},\s*\d{1,2},\s*(\d{1,2}),\s*(\d{1,2})(?:,\s*(\d{1,2}))?/);
+  if(dm)return (+dm[1])+(+dm[2]/60)+((+dm[3]||0)/3600);
+  let m=s.match(/^(\d{1,3})\s*[_:]\s*(\d{1,2})(?:\s*[:_]\s*(\d{1,2}))?$/);
+  if(m){const h=+m[1],mi=+m[2],se=+m[3]||0;return h+mi/60+se/3600;}
+  m=s.match(/(\d+(?:\.\d+)?)\s*h(?:ora|oras)?\s*(?:(\d+)\s*m(?:in)?)?/i);
+  if(m)return (+m[1])+((+m[2]||0)/60);
+  m=s.match(/^(\d+)\s*m(?:in)?$/i);
+  if(m)return (+m[1])/60;
+  const v=num(s);
+  if(v>=0&&v<1)return v*24;
+  if(v>=1&&v<=24)return v;
+  return 0;
+}
 function classify(obs,sol=''){const text=normalizeObs(String(obs||'')+' '+String(sol||''));if(['ACCIDENTE','ACOSA','DETENCION'].some(k=>text.includes(k)))return 'Seguridad / incidente';if(['FALLA MECANICA','MECANICA','PLACA','VEHICULAR','VH','MOTO'].some(k=>text.includes(k)))return 'Falla mecánica / vehículo';if(['ENFERM','INCAPACIDAD','CALAMIDAD'].some(k=>text.includes(k)))return 'Salud / calamidad';if(['NO ASISTE','NO SE PRESENTA','NO LLEGA','SE AUSENTA','NO CONTINUA'].some(k=>text.includes(k)))return 'No asistencia';if(['RETRASO','TARDE','LLEGA AL PUNTO','LLEGA TARDE'].some(k=>text.includes(k)))return 'Retraso';if(['NO SE PONE','NO SE CUBRE','NO SE LOGRA','NO COLOCACION','ADICIONAL','APOYO'].some(k=>text.includes(k)))return 'No colocación / adicional';if(['PESO','PERIFERIA','TRANSFERENCIAS','ARL','PUNTO','PEDIDOS','CARGA'].some(k=>text.includes(k)))return 'Condición operativa / punto';if(['INUNDACION','CLIMA','CARNAVAL'].some(k=>text.includes(k)))return 'Fuerza mayor / entorno';return 'Otros'}
 function inferChain(store,map){const k=cleanKey(store);if(map[k])return map[k];if(k.startsWith('CARULLA'))return 'Carulla';if(k.startsWith('EXITO')||k.startsWith('XITO'))return 'Éxito';if(k.startsWith('SURTIMAX'))return 'Surtimax';if(k.startsWith('SUPER INTER')||k.startsWith('SUPERINTER'))return 'Super Inter';return 'Sin cadena'}
 function transformBitacora(rows){
@@ -403,12 +465,13 @@ function showToast(msg,type='warn',ms=5200){const el=byId('dataToast');if(!el)re
 function setLoading(on){document.body.classList.toggle('loading-data',!!on);['navRefreshBtn','heroRefreshBtn'].forEach(id=>{const el=byId(id);if(el)el.classList.toggle('loading',!!on)})}
 function setBodyLoadState(state){document.body.classList.remove('loaded-data','load-error');if(state==='ok')document.body.classList.add('loaded-data');if(state==='err')document.body.classList.add('load-error')}
 function gvizCell(cell){if(!cell)return ''; if(cell.v==null||cell.v==='')return cell.f||''; if(typeof cell.v==='string'&&/^Date\(/.test(cell.v))return cell.v; return cell.f!=null&&String(cell.f).trim()!==''?cell.f:cell.v}
+function cacheBustUrl(url){const sep=url.includes('?')?'&':'?';return url+sep+'_bi_refresh='+Date.now()}
 function gvizRows(table){if(!table||!table.rows)return [];return table.rows.map(r=>{const cells=r.c||[];const max=Math.max(cells.length,(table.cols||[]).length);const row=[];for(let i=0;i<max;i++)row.push(gvizCell(cells[i]));return row}).filter(r=>r.some(c=>String(c).trim()!==''))}
 function loadGvizJsonp(gid,label){return new Promise((resolve,reject)=>{const cb='__exito_gviz_'+label.replace(/\W+/g,'_')+'_'+Date.now()+'_'+Math.floor(Math.random()*100000);const timeout=setTimeout(()=>{cleanup();reject(new Error(label+': Google no respondió por JSONP.'))},20000);function cleanup(){clearTimeout(timeout);try{delete window[cb]}catch(e){window[cb]=undefined}if(script&&script.parentNode)script.parentNode.removeChild(script)}window[cb]=function(resp){try{if(resp&&resp.status&&resp.status!=='ok')throw new Error(label+': '+(resp.errors&&resp.errors[0]&&resp.errors[0].detailed_message||resp.status));const rows=gvizRows(resp.table);if(!rows.length)throw new Error(label+': la hoja llegó vacía por gviz.');cleanup();resolve(rows)}catch(e){cleanup();reject(e)}};const script=document.createElement('script');const tq=encodeURIComponent('select *');script.onerror=()=>{cleanup();reject(new Error(label+': no se pudo cargar el script gviz.'))};script.src=`${DRIVE_BASE}/gviz/tq?gid=${gid}&headers=0&tq=${tq}&tqx=responseHandler:${cb};out:json&cacheBust=${Date.now()}`;document.head.appendChild(script)})}
 async function loadFromGviz(){agentLog('Lectura sin CORS: Google Visualization JSONP.');const [bitRows,novRows]=await Promise.all([loadGvizJsonp(CONFIG.bitGid,'BITACORA'),loadGvizJsonp(CONFIG.novGid,'NOVEDADES')]);agentLog(`GViz recibido: BITACORA ${fmtInt(bitRows.length)} filas, NOVEDADES ${fmtInt(novRows.length)} filas.`,'ok');loadFromRows(bitRows,novRows,'Google Sheets publicado (GViz JSONP)')}
 
-async function fetchText(url,label='fuente'){agentLog(`Consultando ${label}...`);const res=await fetch(url,{cache:'no-store'});if(!res.ok)throw new Error(`${label}: HTTP ${res.status}`);const text=await res.text();const head=text.slice(0,350).toLowerCase();if(head.includes('<!doctype')||head.includes('<html')||head.includes('<title>'))throw new Error(`${label}: Google devolvió HTML, no CSV. Puede ser permiso, publicación o redirección.`);if(/sign\s*in|iniciar\s+sesion|request access|solicitar acceso/i.test(text.slice(0,1000)))throw new Error(`${label}: la fuente solicita acceso y no está pública para lectura.`);if(text.trim().length<20)throw new Error(`${label}: respuesta vacía o incompleta.`);return text}
-async function fetchArrayBuffer(url,label='XLSX publicado'){agentLog(`Consultando ${label}...`);const res=await fetch(url,{cache:'no-store'});if(!res.ok)throw new Error(`${label}: HTTP ${res.status}`);const ct=(res.headers.get('content-type')||'').toLowerCase();const buf=await res.arrayBuffer();if(buf.byteLength<2000)throw new Error(`${label}: archivo demasiado pequeño para ser XLSX.`);if(ct.includes('text/html'))throw new Error(`${label}: Google devolvió HTML, no XLSX.`);return buf}
+async function fetchText(url,label='fuente'){agentLog(`Consultando ${label}...`);const res=await fetch(cacheBustUrl(url),{cache:'no-store'});if(!res.ok)throw new Error(`${label}: HTTP ${res.status}`);const text=await res.text();const head=text.slice(0,350).toLowerCase();if(head.includes('<!doctype')||head.includes('<html')||head.includes('<title>'))throw new Error(`${label}: Google devolvió HTML, no CSV. Puede ser permiso, publicación o redirección.`);if(/sign\s*in|iniciar\s+sesion|request access|solicitar acceso/i.test(text.slice(0,1000)))throw new Error(`${label}: la fuente solicita acceso y no está pública para lectura.`);if(text.trim().length<20)throw new Error(`${label}: respuesta vacía o incompleta.`);return text}
+async function fetchArrayBuffer(url,label='XLSX publicado'){agentLog(`Consultando ${label}...`);const res=await fetch(cacheBustUrl(url),{cache:'no-store'});if(!res.ok)throw new Error(`${label}: HTTP ${res.status}`);const ct=(res.headers.get('content-type')||'').toLowerCase();const buf=await res.arrayBuffer();if(buf.byteLength<2000)throw new Error(`${label}: archivo demasiado pequeño para ser XLSX.`);if(ct.includes('text/html'))throw new Error(`${label}: Google devolvió HTML, no XLSX.`);return buf}
 function sheetRows(wb, wanted){const target=norm(wanted).toUpperCase();const name=wb.SheetNames.find(n=>norm(n).toUpperCase()===target)||wb.SheetNames.find(n=>norm(n).toUpperCase().includes(target));if(!name)throw new Error(`No existe la hoja ${wanted} en el XLSX publicado.`);return XLSX.utils.sheet_to_json(wb.Sheets[name],{header:1,defval:'',raw:true})}
 async function loadFromXlsx(){agentLog('Paso 1/6: Drive raíz → libro publicado XLSX.');if(!window.XLSX)throw new Error('Librería XLSX no disponible en el navegador.');const buf=await fetchArrayBuffer(CONFIG.publishedXlsxUrl,'XLSX publicado');const wb=XLSX.read(buf,{type:'array',cellDates:true});agentLog(`XLSX recibido. Hojas detectadas: ${wb.SheetNames.join(', ')}`,'ok');const bitRows=sheetRows(wb,'BITACORA');const novRows=sheetRows(wb,'NOVEDADES');agentLog(`Hojas leídas desde XLSX: BITACORA ${fmtInt(bitRows.length)} filas, NOVEDADES ${fmtInt(novRows.length)} filas.`,'ok');loadFromRows(bitRows,novRows,'Google Sheets publicado (XLSX)')}
 async function firstGoodText(candidates,kind){const errors=[];for(const c of candidates){try{const txt=await fetchText(c.url,c.label);agentLog(`${kind}: fuente válida usando ${c.label}.`,'ok');return {txt,source:c}}catch(e){const msg=e&&e.message?e.message:String(e);errors.push(msg);agentLog(`${kind}: ${msg}`,'warn')}}throw new Error(errors.join(' || '))}
@@ -527,9 +590,9 @@ function renderTable(id, headers, rows){const sort=state.sort[id];let data=[...r
 function filterTable(id,q){q=String(q||'').toLowerCase();byId(id).querySelectorAll('tbody tr').forEach(tr=>tr.style.display=tr.textContent.toLowerCase().includes(q)?'':'none')}
 function exportTable(id,filename){const rows=[...byId(id).querySelectorAll('tr')].filter(r=>r.style.display!=='none').map(tr=>[...tr.children].map(td=>'"'+td.textContent.replaceAll('"','""')+'"').join(','));const blob=new Blob([rows.join('\n')],{type:'text/csv;charset=utf-8'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=filename;a.click();URL.revokeObjectURL(a.href)}
 function renderFindings(daily,typeRows,storeRows,totals){const worst=[...daily].filter(x=>x.sol>0).sort((a,b)=>a.acid-b.acid)[0];const topType=typeRows[0];const topStore=[...storeRows].sort((a,b)=>b.nov-a.nov)[0];let html='';html+=`<div class="finding black">Colocación: <b>${fmtPct(totals.placement)}</b><br>Ácido: <b>${fmtPct(totals.acid)}</b></div>`;if(worst)html+=`<div class="finding red">Día más crítico: <b>${fmtDate(worst.date)} (${worst.dia})</b><br>Ácido ${fmtPct(worst.acid)}, ${fmtInt(worst.nov)} novedades.</div>`;if(topType)html+=`<div class="finding">Principal tipo: <b>${esc(topType.tipo)}</b><br>${fmtInt(topType.nov)} casos.</div>`;if(topStore)html+=`<div class="finding">Punto con más novedades: <b>${esc(topStore.store)}</b><br>${fmtInt(topStore.nov)} casos.</div>`;byId('findings').innerHTML=html||'<p>Sin datos.</p>'}
-function renderAudit(){const dates=[...BIT.map(x=>x.date),...NOV.map(x=>x.date)].sort();const min=dates[0]||'-',max=dates[dates.length-1]||'-';const items=[['Modo de carga',SOURCE.mode],['Última carga',SOURCE.loadedAt||'-'],['BITACORA en memoria',fmtInt(SOURCE.bitRows)],['NOVEDADES en memoria',fmtInt(SOURCE.novRows)],['Columnas fecha detectadas',fmtInt(SOURCE.dateCols)],['Rango fuente',min==='-'?'-':`${fmtDate(min)} - ${fmtDate(max)}`],['Datos quemados','No: BIT/NOV se generan al cargar'],['Tipo novedad','Derivado por reglas auditables'],['Alertas técnicas',SOURCE.errors&&SOURCE.errors.length?SOURCE.errors.join(' | '):'Sin alertas']];byId('auditList').innerHTML=items.map(([l,v])=>`<div class="audit-item"><div class="l">${esc(l)}</div><div class="v">${esc(v)}</div></div>`).join('')}
-function render(){if(!BIT.length&&!NOV.length){renderAudit();return}const f=getFilters();const bit=BIT.filter(x=>bitPass(x,f));const nov=NOV.filter(x=>novPass(x,f));const daily=aggregateDaily(bit,nov);const monthly=aggregateMonthly(daily);const typeRows=aggregateType(nov);const storeRows=aggregateStore(bit,nov);const weekday=aggregateWeekday(daily);const sol=sum(bit,'sol'),col=sum(bit,'col'),novs=nov.length,hours=sum(nov,'hours');const totals={sol,col,novs,hours,gap:sol-col,placement:safeDiv(col,sol)*100,acid:safeDiv(col-novs,sol)*100,nov100:safeDiv(novs,sol)*100};byId('kpiSol').textContent=fmtInt(sol);byId('kpiCol').textContent=fmtInt(col);byId('kpiPlacement').textContent=fmtPct(totals.placement);byId('kpiAcid').textContent=fmtPct(totals.acid);byId('kpiNov').textContent=fmtInt(novs);byId('kpiGap').textContent=fmtInt(totals.gap);byId('kpiHours').textContent=fmtDec(hours,1);byId('kpiNov100').textContent=fmtDec(totals.nov100,2);const chartRows=state.grain==='month'?monthly:daily;byId('dailyCountPill').textContent=state.grain==='month'?`${fmtInt(monthly.length)} meses`:`${fmtInt(daily.length)} días`;document.querySelectorAll('.grain-btn').forEach(btn=>btn.classList.toggle('active',btn.dataset.grain===state.grain));byId('dailyChart').innerHTML=drawDaily(chartRows,state.grain);byId('compChart').innerHTML=drawCompliance(chartRows,state.grain);if(byId('monthlyChart'))byId('monthlyChart').innerHTML=drawMonthly(monthly);setChartReadout('daily',chartRows[chartRows.length-1],state.grain);setChartReadout('comp',chartRows[chartRows.length-1],state.grain);setChartReadout('monthly',monthly[monthly.length-1],'month');const chartType=[...groupBy(nov,x=>x.tipo)].map(([tipo,arr])=>({tipo,nov:arr.length})).sort((a,b)=>b.nov-a.nov);byId('typeChart').innerHTML=drawBars(chartType,'tipo','nov');byId('weekdayChart').innerHTML=drawBars(weekday,'day','novDay',v=>fmtDec(v,1));renderFindings(daily,typeRows,storeRows,totals);if(byId('monthlyTable'))renderTable('monthlyTable',[{label:'Mes',key:'mes'},{label:'Solicitado',key:'sol',fmt:v=>fmtInt(v)},{label:'Colocado',key:'col',fmt:v=>fmtInt(v)},{label:'Gap',key:'gap',fmt:v=>fmtInt(v),classFn:v=>v>0?'bad':'good'},{label:'Novedades',key:'nov',fmt:v=>fmtInt(v)},{label:'Colocación',key:'placement',fmt:v=>fmtPct(v),classFn:v=>v>=98?'good':'bad'},{label:'Ácido',key:'acid',fmt:v=>fmtPct(v),classFn:v=>v>=95?'good':'bad'}],monthly);renderTable('dailyTable',[{label:'Fecha',key:'date',fmt:v=>fmtDate(v)},{label:'Día',key:'dia'},{label:'Solicitado',key:'sol',fmt:v=>fmtInt(v)},{label:'Colocado',key:'col',fmt:v=>fmtInt(v)},{label:'Gap',key:'gap',fmt:v=>fmtInt(v),classFn:v=>v>0?'bad':'good'},{label:'Novedades',key:'nov',fmt:v=>fmtInt(v)},{label:'Colocación',key:'placement',fmt:v=>fmtPct(v),classFn:v=>v>=98?'good':'bad'},{label:'Ácido',key:'acid',fmt:v=>fmtPct(v),classFn:v=>v>=95?'good':'bad'},{label:'Tipo dominante',key:'topTipo'}],daily);renderTable('typeTable',[{label:'Tipo',key:'tipo'},{label:'Observación',key:'obs'},{label:'Solución',key:'solution'},{label:'Casos',key:'nov',fmt:v=>fmtInt(v)},{label:'Horas',key:'hours',fmt:v=>fmtDec(v,1)},{label:'Prom. horas',key:'avgHours',fmt:v=>fmtDec(v,2)},{label:'Ciudades',key:'cities',fmt:v=>fmtInt(v)},{label:'Puntos',key:'stores',fmt:v=>fmtInt(v)}],typeRows);renderTable('storeTable',[{label:'Cadena',key:'chain'},{label:'Ciudad',key:'city'},{label:'Punto de venta',key:'store'},{label:'Solicitado',key:'sol',fmt:v=>fmtInt(v)},{label:'Colocado',key:'col',fmt:v=>fmtInt(v)},{label:'Gap',key:'gap',fmt:v=>fmtInt(v),classFn:v=>v>0?'bad':'good'},{label:'Novedades',key:'nov',fmt:v=>fmtInt(v)},{label:'Colocación',key:'placement',fmt:v=>fmtPct(v),classFn:v=>v>=98?'good':'bad'},{label:'Ácido',key:'acid',fmt:v=>fmtPct(v),classFn:v=>v>=95?'good':'bad'},{label:'Nov/100',key:'nov100',fmt:v=>fmtDec(v,2)}],storeRows);renderAudit()}
-function clearData(){BIT=[];NOV=[];SOURCE={mode:'Sin carga',loadedAt:null,bitRows:0,novRows:0,dateCols:0,errors:[],sourceUrls:CONFIG,root:'Drive / Google Sheets'};['dailyChart','compChart','monthlyChart','typeChart','weekdayChart','findings','monthlyTable','dailyTable','typeTable','storeTable'].forEach(id=>byId(id).innerHTML='');['daily','comp','monthly'].forEach(id=>setChartReadout(id,null,state.grain));['kpiSol','kpiCol','kpiPlacement','kpiAcid','kpiNov','kpiGap','kpiHours','kpiNov100'].forEach(id=>byId(id).textContent='-');setStatus('Datos limpiados. Carga nuevamente desde Google Sheets o CSV.',false);agentReset();agentLog('Datos en memoria limpiados por el usuario.','warn');renderAudit();updateAgentMeta('Sin datos')}
+function renderAudit(){const dates=[...BIT.map(x=>x.date),...NOV.map(x=>x.date)].sort();const min=dates[0]||'-',max=dates[dates.length-1]||'-';const items=[['Modo de carga',SOURCE.mode],['Última carga',SOURCE.loadedAt||'-'],['BITACORA en memoria',fmtInt(SOURCE.bitRows)],['NOVEDADES en memoria',fmtInt(SOURCE.novRows)],['Columnas fecha detectadas',fmtInt(SOURCE.dateCols)],['Rango fuente',min==='-'?'-':`${fmtDate(min)} - ${fmtDate(max)}`],['Datos quemados','No: BIT/NOV se generan al cargar'],['Tipo novedad','Derivado por reglas auditables'],['Fechas con año 206 / 0206 / 26','Se corrigen en memoria a 2026 para evitar subconteos'],['Horas afectación','Se leen como duración HH:mm, no como fecha ni serial'],['Alertas técnicas',SOURCE.errors&&SOURCE.errors.length?SOURCE.errors.join(' | '):'Sin alertas']];byId('auditList').innerHTML=items.map(([l,v])=>`<div class="audit-item"><div class="l">${esc(l)}</div><div class="v">${esc(v)}</div></div>`).join('')}
+function render(){if(!BIT.length&&!NOV.length){renderAudit();return}const f=getFilters();const bit=BIT.filter(x=>bitPass(x,f));const nov=NOV.filter(x=>novPass(x,f));const daily=aggregateDaily(bit,nov);const monthly=aggregateMonthly(daily);const typeRows=aggregateType(nov);const storeRows=aggregateStore(bit,nov);const weekday=aggregateWeekday(daily);const sol=sum(bit,'sol'),col=sum(bit,'col'),novs=nov.length,hours=sum(nov,'hours');const totals={sol,col,novs,hours,gap:sol-col,placement:safeDiv(col,sol)*100,acid:safeDiv(col-novs,sol)*100,nov100:safeDiv(novs,sol)*100};byId('kpiSol').textContent=fmtInt(sol);byId('kpiCol').textContent=fmtInt(col);byId('kpiPlacement').textContent=fmtPct(totals.placement);byId('kpiAcid').textContent=fmtPct(totals.acid);byId('kpiNov').textContent=fmtInt(novs);byId('kpiGap').textContent=fmtInt(totals.gap);byId('kpiHours').textContent=fmtHours(hours);byId('kpiNov100').textContent=fmtDec(totals.nov100,2);const chartRows=state.grain==='month'?monthly:daily;byId('dailyCountPill').textContent=state.grain==='month'?`${fmtInt(monthly.length)} meses`:`${fmtInt(daily.length)} días`;document.querySelectorAll('.grain-btn').forEach(btn=>btn.classList.toggle('active',btn.dataset.grain===state.grain));byId('dailyChart').innerHTML=drawDaily(chartRows,state.grain);byId('compChart').innerHTML=drawCompliance(chartRows,state.grain);if(byId('monthlyChart'))byId('monthlyChart').innerHTML=drawMonthly(monthly);setChartReadout('daily',chartRows[chartRows.length-1],state.grain);setChartReadout('comp',chartRows[chartRows.length-1],state.grain);setChartReadout('monthly',monthly[monthly.length-1],'month');const chartType=[...groupBy(nov,x=>x.tipo)].map(([tipo,arr])=>({tipo,nov:arr.length})).sort((a,b)=>b.nov-a.nov);byId('typeChart').innerHTML=drawBars(chartType,'tipo','nov');byId('weekdayChart').innerHTML=drawBars(weekday,'day','novDay',v=>fmtDec(v,1));renderFindings(daily,typeRows,storeRows,totals);if(byId('monthlyTable'))renderTable('monthlyTable',[{label:'Mes',key:'mes'},{label:'Solicitado',key:'sol',fmt:v=>fmtInt(v)},{label:'Colocado',key:'col',fmt:v=>fmtInt(v)},{label:'Gap',key:'gap',fmt:v=>fmtInt(v),classFn:v=>v>0?'bad':'good'},{label:'Novedades',key:'nov',fmt:v=>fmtInt(v)},{label:'Colocación',key:'placement',fmt:v=>fmtPct(v),classFn:v=>v>=98?'good':'bad'},{label:'Ácido',key:'acid',fmt:v=>fmtPct(v),classFn:v=>v>=95?'good':'bad'}],monthly);renderTable('dailyTable',[{label:'Fecha',key:'date',fmt:v=>fmtDate(v)},{label:'Día',key:'dia'},{label:'Solicitado',key:'sol',fmt:v=>fmtInt(v)},{label:'Colocado',key:'col',fmt:v=>fmtInt(v)},{label:'Gap',key:'gap',fmt:v=>fmtInt(v),classFn:v=>v>0?'bad':'good'},{label:'Novedades',key:'nov',fmt:v=>fmtInt(v)},{label:'Colocación',key:'placement',fmt:v=>fmtPct(v),classFn:v=>v>=98?'good':'bad'},{label:'Ácido',key:'acid',fmt:v=>fmtPct(v),classFn:v=>v>=95?'good':'bad'},{label:'Tipo dominante',key:'topTipo'}],daily);renderTable('typeTable',[{label:'Tipo',key:'tipo'},{label:'Observación',key:'obs'},{label:'Solución',key:'solution'},{label:'Casos',key:'nov',fmt:v=>fmtInt(v)},{label:'Horas',key:'hours',fmt:v=>fmtHours(v)},{label:'Prom. horas',key:'avgHours',fmt:v=>fmtHours(v)},{label:'Ciudades',key:'cities',fmt:v=>fmtInt(v)},{label:'Puntos',key:'stores',fmt:v=>fmtInt(v)}],typeRows);renderTable('storeTable',[{label:'Cadena',key:'chain'},{label:'Ciudad',key:'city'},{label:'Punto de venta',key:'store'},{label:'Solicitado',key:'sol',fmt:v=>fmtInt(v)},{label:'Colocado',key:'col',fmt:v=>fmtInt(v)},{label:'Gap',key:'gap',fmt:v=>fmtInt(v),classFn:v=>v>0?'bad':'good'},{label:'Novedades',key:'nov',fmt:v=>fmtInt(v)},{label:'Colocación',key:'placement',fmt:v=>fmtPct(v),classFn:v=>v>=98?'good':'bad'},{label:'Ácido',key:'acid',fmt:v=>fmtPct(v),classFn:v=>v>=95?'good':'bad'},{label:'Nov/100',key:'nov100',fmt:v=>fmtDec(v,2)}],storeRows);renderAudit()}
+function clearData(){BIT=[];NOV=[];SOURCE={mode:'Sin carga',loadedAt:null,bitRows:0,novRows:0,dateCols:0,errors:[],sourceUrls:CONFIG,root:'Drive / Google Sheets'};['dailyChart','compChart','monthlyChart','typeChart','weekdayChart','findings','monthlyTable','dailyTable','typeTable','storeTable'].forEach(id=>byId(id).innerHTML='');['kpiSol','kpiCol','kpiPlacement','kpiAcid','kpiNov','kpiGap','kpiHours','kpiNov100'].forEach(id=>byId(id).textContent='-');setStatus('Datos limpiados. Carga nuevamente desde Google Sheets o CSV.',false);agentReset();agentLog('Datos en memoria limpiados por el usuario.','warn');renderAudit();updateAgentMeta('Sin datos')}
 if(byId('bitLink')){byId('bitLink').href=CONFIG.bitCsvUrl;byId('bitLink').textContent=CONFIG.bitCsvUrl;}if(byId('novLink')){byId('novLink').href=CONFIG.novCsvUrl;byId('novLink').textContent=CONFIG.novCsvUrl;}['navRefreshBtn','heroRefreshBtn'].forEach(id=>{if(byId(id))byId(id).onclick=()=>{location.hash='resumen';loadFromGoogle()}});if(byId('loadLocalBtn'))byId('loadLocalBtn').onclick=loadLocal;if(byId('clearBtn'))byId('clearBtn').onclick=clearData;if(byId('resetBtn'))byId('resetBtn').onclick=()=>{initFilters();render()};document.querySelectorAll('.filters input,.filters select').forEach(el=>el.addEventListener('change',render));document.querySelectorAll('.search').forEach(inp=>inp.addEventListener('input',e=>filterTable(e.target.dataset.table,e.target.value)));document.querySelectorAll('.grain-btn').forEach(btn=>btn.addEventListener('click',()=>{state.grain=btn.dataset.grain||'day';render()}));
 const hoverCard=byId('chartHoverCard');
 function renderHoverCard(data){if(!hoverCard)return;const acidClass=data.acid>=95?'green':'red';const placementClass=data.placement>=98?'green':'yellow';hoverCard.innerHTML=`<div class="hc-title">${esc(data.title)}</div><div class="hc-sub">${esc(data.sub||'Consolidado')}</div><div class="hc-grid"><div class="hc-metric"><div class="hc-label">Solicitado</div><div class="hc-val yellow">${fmtInt(data.sol)}</div></div><div class="hc-metric"><div class="hc-label">Colocado</div><div class="hc-val">${fmtInt(data.col)}</div></div><div class="hc-metric"><div class="hc-label">Gap</div><div class="hc-val ${data.gap>0?'red':'green'}">${fmtInt(data.gap)}</div></div><div class="hc-metric"><div class="hc-label">Novedades</div><div class="hc-val red">${fmtInt(data.nov)}</div></div><div class="hc-metric"><div class="hc-label">Colocación</div><div class="hc-val ${placementClass}">${fmtPct(data.placement)}</div></div><div class="hc-metric"><div class="hc-label">Ácido</div><div class="hc-val ${acidClass}">${fmtPct(data.acid)}</div></div></div><div class="hc-foot">Tipo dominante: <b>${esc(data.topTipo||'Sin novedad')}</b><br>Novedades por cada 100 solicitudes: <b>${fmtDec(data.nov100,2)}</b></div>`}
