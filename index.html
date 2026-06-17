@@ -999,21 +999,35 @@ function drawDaily(rows,grain='day'){
   return svgWrap(s,w,h)
 }
 function drawCompliance(rows,grain='day'){
-  const w=820,h=340,l=62,r=32,t=38,b=60,plotW=w-l-r,plotH=h-t-b;
+  const w=820,h=340,l=62,r=32,t=44,b=60,plotW=w-l-r,plotH=h-t-b;
   if(!rows.length)return '<p style="padding:18px;font-weight:900;color:#6b5b00">Sin datos para graficar con los filtros seleccionados.</p>';
   const n=rows.length;
-  const yVal=v=>t+plotH-(Math.max(0,Math.min(110,v))/110*plotH);
+  const vals=rows.flatMap(d=>[d.placement,d.acid].map(Number).filter(Number.isFinite));
+  if(!vals.length)return '<p style="padding:18px;font-weight:900;color:#6b5b00">Sin porcentajes válidos para graficar.</p>';
+  const minRaw=Math.min(...vals),maxRaw=Math.max(...vals);
+  let minY=Math.max(0,Math.floor(Math.min(95,minRaw-1)));
+  let maxY=Math.min(110,Math.ceil(Math.max(100,maxRaw+1)));
+  if(maxY-minY<5){const mid=(minY+maxY)/2;minY=Math.max(0,Math.floor(mid-2.5));maxY=Math.min(110,Math.ceil(mid+2.5))}
+  const yVal=v=>{
+    const safe=Math.max(minY,Math.min(maxY,Number(v)||0));
+    return t+plotH-((safe-minY)/(maxY-minY)*plotH)
+  };
   let s=`<defs>
     <linearGradient id="greenStroke" x1="0" x2="1" y1="0" y2="0"><stop offset="0" stop-color="#111"/><stop offset="1" stop-color="#00A565"/></linearGradient>
     <linearGradient id="redStroke" x1="0" x2="1" y1="0" y2="0"><stop offset="0" stop-color="#FF6B6B"/><stop offset="1" stop-color="#ED1C24"/></linearGradient>
     <filter id="lineShadow"><feDropShadow dx="0" dy="4" stdDeviation="4" flood-color="#111" flood-opacity=".16"/></filter>
   </defs><rect width="${w}" height="${h}" rx="18" fill="#fffdf6"/>`;
-  [80,90,95,100].forEach(v=>{const y=yVal(v);s+=`<line class="grid" x1="${l}" y1="${y}" x2="${w-r}" y2="${y}" stroke-dasharray="${v===95?'7 7':'0'}"/><text class="axis-label" x="${l-10}" y="${y+4}" text-anchor="end">${v}%</text>`});
-  s+=`<rect x="${l}" y="${yVal(110)}" width="${plotW}" height="${yVal(95)-yVal(110)}" fill="#00A565" opacity=".05"/><line x1="${l}" y1="${t+plotH}" x2="${w-r}" y2="${t+plotH}" stroke="#D9D2B8"/><text class="axis-title" x="${l}" y="18" fill="#111">Cumplimiento de colocación</text><text class="axis-title" x="${w-r}" y="18" text-anchor="end" fill="#ED1C24">Indicador ácido</text>`;
+  const span=maxY-minY,step=span<=8?1:span<=16?2:5;
+  const tickSet=new Set();
+  for(let v=Math.ceil(minY/step)*step;v<=maxY;v+=step)tickSet.add(+v.toFixed(1));
+  [95,100].forEach(v=>{if(v>=minY&&v<=maxY)tickSet.add(v)});
+  [...tickSet].sort((a,b)=>a-b).forEach(v=>{const y=yVal(v);s+=`<line class="grid" x1="${l}" y1="${y}" x2="${w-r}" y2="${y}" stroke-dasharray="${v===95?'7 7':'0'}"/><text class="axis-label" x="${l-10}" y="${y+4}" text-anchor="end">${v}%</text>`});
+  if(maxY>95){const bandBottom=yVal(Math.max(minY,95));s+=`<rect x="${l}" y="${t}" width="${plotW}" height="${Math.max(0,bandBottom-t)}" fill="#00A565" opacity=".05"/>`}
+  s+=`<line x1="${l}" y1="${t+plotH}" x2="${w-r}" y2="${t+plotH}" stroke="#D9D2B8"/><text class="axis-title" x="${l}" y="18" fill="#111">Cumplimiento de colocación</text><text class="axis-title" x="${w-r}" y="18" text-anchor="end" fill="#ED1C24">Indicador ácido</text>`;
   const pts=k=>rows.map((d,i)=>`${xFor(i,n,l,plotW)},${yVal(d[k]||0)}`).join(' ');
   s+=`<polyline points="${pts('placement')}" fill="none" stroke="url(#greenStroke)" stroke-width="4.4" stroke-linecap="round" stroke-linejoin="round" filter="url(#lineShadow)"/>`;
   s+=`<polyline points="${pts('acid')}" fill="none" stroke="url(#redStroke)" stroke-width="4.4" stroke-linecap="round" stroke-linejoin="round" filter="url(#lineShadow)"/>`;
-  rows.forEach((d,i)=>{const x=xFor(i,n,l,plotW);const y1=yVal(d.placement||0),y2=yVal(d.acid||0);s+=`<circle cx="${x}" cy="${y1}" r="${grain==='month'?6.5:4.6}" fill="#111" stroke="#fff" stroke-width="2.4"/><circle cx="${x}" cy="${y2}" r="${grain==='month'?6.5:4.6}" fill="#ED1C24" stroke="#fff" stroke-width="2.4"/>`; if(grain==='month'||n<=34){s+=`<text class="chart-value" x="${x}" y="${Math.max(t+11,Math.min(y1,y2)-10)}" text-anchor="middle" font-size="9.5" fill="#111">${fmtPct(d.placement)}</text>`}});
+  rows.forEach((d,i)=>{const x=xFor(i,n,l,plotW);const y1=yVal(d.placement||0),y2=yVal(d.acid||0);s+=`<circle cx="${x}" cy="${y1}" r="${grain==='month'?6.5:4.6}" fill="#111" stroke="#fff" stroke-width="2.4"/><circle cx="${x}" cy="${y2}" r="${grain==='month'?6.5:4.6}" fill="#ED1C24" stroke="#fff" stroke-width="2.4"/>`; if(grain==='month'||n<=34){const labelY=Math.max(t+16,Math.min(y1,y2)-12);s+=`<text class="chart-value" x="${x}" y="${labelY}" text-anchor="middle" font-size="9.5" fill="#111">${fmtPct(d.placement)}</text>`}});
   rows.filter((_,i)=>i%Math.max(1,Math.ceil(n/8))===0||i===n-1).forEach(d=>{const idx=rows.indexOf(d),x=xFor(idx,n,l,plotW);const label=grain==='month'?String(d.mes||'').slice(0,3):fmtDate(d.date).slice(0,5);s+=`<text class="axis-label" x="${x}" y="${h-24}" text-anchor="middle">${esc(label)}</text>`});
   const slot=n<=1?plotW:plotW/(n-1);
   rows.forEach((d,i)=>{const x=xFor(i,n,l,plotW);s=addHit(s,d,grain,x,Math.max(22,slot*.9),l,t,plotH,plotW,'comp')});
