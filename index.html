@@ -62,7 +62,7 @@ a{color:inherit}
 .btn.yellow{background:var(--y);color:#111;border-color:#111}
 .btn:disabled{opacity:.55;cursor:not-allowed}
 .inputfile{width:100%;padding:9px;border:1px solid rgba(255,255,255,.22);border-radius:14px;background:#fff;color:#111;font-weight:800}
-.filters{display:grid;grid-template-columns:repeat(8,1fr);gap:12px;background:rgba(255,255,255,.82);border:1px solid rgba(232,227,205,.95);box-shadow:var(--shadow);border-radius:24px;padding:16px;margin-bottom:20px;backdrop-filter:blur(14px)}
+.filters{display:grid;grid-template-columns:repeat(9,1fr);gap:12px;background:rgba(255,255,255,.82);border:1px solid rgba(232,227,205,.95);box-shadow:var(--shadow);border-radius:24px;padding:16px;margin-bottom:20px;backdrop-filter:blur(14px)}
 .field label{font-size:11px;font-weight:1000;color:#665e38;text-transform:uppercase;letter-spacing:.6px;display:block;margin-bottom:6px}
 .field input,.field select{width:100%;border:1px solid #ded6b9;background:#fff;border-radius:13px;padding:10px 11px;font-weight:850;color:#202020;outline:none}
 .field input:focus,.field select:focus,.search:focus{border-color:var(--y);box-shadow:0 0 0 3px rgba(255,209,0,.3)}
@@ -583,6 +583,7 @@ svg text{font-family:var(--font-ui)!important;}
     <div class="field"><label>Ciudad</label><select id="cityFilter"><option value="">Todas</option></select></div>
     <div class="field"><label>Punto de venta</label><select id="storeFilter"><option value="">Todos</option></select></div>
     <div class="field"><label>Tipo de novedad</label><select id="typeFilter"><option value="">Todos</option></select></div>
+    <div class="field"><label>Tipo de vehículo</label><select id="vehicleFilter"><option value="">Todos</option><option value="Carry">Carry</option><option value="Moto">Moto</option></select></div>
     <div class="field"><label>Día de semana</label><select id="dayFilter"><option value="">Todos</option></select></div>
     <div class="field"><label>&nbsp;</label><button class="btn yellow" id="resetBtn" style="width:100%">Restablecer</button></div>
   </section>
@@ -960,10 +961,12 @@ async function loadLocal(){const bf=byId('bitFile').files[0], nf=byId('novFile')
 function setStatus(msg,isErr){const el=byId('loadStatus');if(el)el.innerHTML=`<strong>${isErr?'⚠️':'✅'}</strong> ${esc(msg)}`;const badge=byId('liveBadge');if(badge)badge.textContent=isErr?'Sin conexión a fuente':'Fuente actualizada';agentBadge(isErr?'Revisar fuente':'Fuente viva',isErr?'err':'ok');updateAgentMeta(isErr?'Con alertas':'Activo')}
 function uniq(arr){return [...new Set(arr.filter(Boolean))].sort((a,b)=>a.localeCompare(b,'es'))}
 function setOptions(id, values, allText){const el=byId(id);el.innerHTML=`<option value="">${allText}</option>`;for(const v of values){const opt=document.createElement('option');opt.value=v;opt.textContent=v;el.appendChild(opt)}}
-function initFilters(){if(!BIT.length&&!NOV.length)return;const dates=[...BIT.map(x=>x.date),...NOV.map(x=>x.date)].sort();const min=dates[0], max=dates[dates.length-1];byId('startDate').value=min;byId('endDate').value=max;byId('startDate').min=min;byId('startDate').max=max;byId('endDate').min=min;byId('endDate').max=max;updateDateRangeUI();setOptions('chainFilter',uniq([...BIT.map(x=>x.chain),...NOV.map(x=>x.chain)]),'Todas');setOptions('cityFilter',uniq([...BIT.map(x=>x.city),...NOV.map(x=>x.city)]),'Todas');setOptions('storeFilter',uniq([...BIT.map(x=>x.store),...NOV.map(x=>x.store)]),'Todos');setOptions('typeFilter',uniq(NOV.map(x=>x.tipo)),'Todos');setOptions('dayFilter',dayOrder,'Todos')}
-function getFilters(){return {start:byId('startDate').value,end:byId('endDate').value,chain:byId('chainFilter').value,city:byId('cityFilter').value,store:byId('storeFilter').value,tipo:byId('typeFilter').value,day:byId('dayFilter').value}}
+function initFilters(){if(!BIT.length&&!NOV.length)return;const dates=[...BIT.map(x=>x.date),...NOV.map(x=>x.date)].sort();const min=dates[0], max=dates[dates.length-1];byId('startDate').value=min;byId('endDate').value=max;byId('startDate').min=min;byId('startDate').max=max;byId('endDate').min=min;byId('endDate').max=max;updateDateRangeUI();setOptions('chainFilter',uniq([...BIT.map(x=>x.chain),...NOV.map(x=>x.chain)]),'Todas');setOptions('cityFilter',uniq([...BIT.map(x=>x.city),...NOV.map(x=>x.city)]),'Todas');setOptions('storeFilter',uniq([...BIT.map(x=>x.store),...NOV.map(x=>x.store)]),'Todos');setOptions('typeFilter',uniq(NOV.map(x=>x.tipo)),'Todos');if(byId('vehicleFilter'))byId('vehicleFilter').value='';setOptions('dayFilter',dayOrder,'Todos')}
+function getFilters(){return {start:byId('startDate').value,end:byId('endDate').value,chain:byId('chainFilter').value,city:byId('cityFilter').value,store:byId('storeFilter').value,tipo:byId('typeFilter').value,vehicle:byId('vehicleFilter')?.value||'',day:byId('dayFilter').value}}
 function bitPass(x,f){return x.date>=f.start&&x.date<=f.end&&(!f.chain||x.chain===f.chain)&&(!f.city||x.city===f.city)&&(!f.store||x.store===f.store)&&(!f.day||x.dia===f.day)}
-function novPass(x,f){return x.date>=f.start&&x.date<=f.end&&(!f.chain||x.chain===f.chain)&&(!f.city||x.city===f.city)&&(!f.store||x.store===f.store)&&(!f.tipo||x.tipo===f.tipo)&&(!f.day||x.dia===f.day)}
+function vehicleBitView(x,vehicle){if(vehicle==='Carry'){const sol=x.reqCarry||0,col=x.carro||0;return {...x,sol,col,gap:sol-col,reqCarry:sol,carro:col,reqMoto:0,moto:0}}if(vehicle==='Moto'){const sol=x.reqMoto||0,col=x.moto||0;return {...x,sol,col,gap:sol-col,reqCarry:0,carro:0,reqMoto:sol,moto:col}}return x}
+function novVehicle(x){return vehicleFromText(x.tipologia,x.inicioTurno,x.cubrimiento,x.fijoAdicional,x.obs,x.solution,x.tipo)}
+function novPass(x,f){return x.date>=f.start&&x.date<=f.end&&(!f.chain||x.chain===f.chain)&&(!f.city||x.city===f.city)&&(!f.store||x.store===f.store)&&(!f.tipo||x.tipo===f.tipo)&&(!f.vehicle||novVehicle(x)===f.vehicle)&&(!f.day||x.dia===f.day)}
 function sum(arr,key){return arr.reduce((t,x)=>t+(+x[key]||0),0)}
 function groupBy(arr,fn){const m=new Map();for(const x of arr){const k=fn(x);if(!m.has(k))m.set(k,[]);m.get(k).push(x)}return m}
 function daysInMonthISO(iso){const [y,m]=String(iso||'').slice(0,7).split('-').map(Number);return y&&m?new Date(y,m,0).getDate():0}
@@ -1128,7 +1131,7 @@ function renderAudit(){
 function render(){
   if(!BIT.length&&!NOV.length){renderAudit();return}
   const token=++RENDER_TOKEN;
-  const f=getFilters();const bit=BIT.filter(x=>bitPass(x,f));const nov=NOV.filter(x=>novPass(x,f));
+  const f=getFilters();const bitBase=BIT.filter(x=>bitPass(x,f));const bit=(f.vehicle?bitBase.map(x=>vehicleBitView(x,f.vehicle)).filter(x=>(x.sol||0)>0||(x.col||0)>0):bitBase);const nov=NOV.filter(x=>novPass(x,f));
   const daily=aggregateDaily(bit,nov);const monthly=aggregateMonthly(daily);const typeRows=aggregateType(nov);const storeRows=aggregateStore(bit,nov);const weekday=aggregateWeekday(daily);const vehicleRows=aggregateVehicle(bit,nov);
   const sol=sum(bit,'sol'),col=sum(bit,'col'),novs=nov.length,hours=sum(nov,'hours');
   const totals={sol,col,novs,hours,gap:sol-col,placement:safeDiv(col,sol)*100,acid:acidPct(novs,sol),nov100:safeDiv(novs,sol)*100};
