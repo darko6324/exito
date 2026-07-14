@@ -247,8 +247,9 @@ body{font-family:var(--font-ui);letter-spacing:-.018em;background:
 
 
 /* Loading overlay feedback */
-.loading-overlay{position:fixed;inset:0;background:rgba(8,8,10,.56);backdrop-filter:blur(5px);display:none;align-items:center;justify-content:center;z-index:2000;padding:22px}
+.loading-overlay{position:fixed;inset:0;background:rgba(8,8,10,.56);backdrop-filter:blur(5px);display:none;align-items:center;justify-content:center;z-index:2147483647!important;padding:22px;isolation:isolate}
 .loading-overlay.show{display:flex}
+body.loading-data{overflow:hidden}
 .loading-modal{width:min(720px,96vw);background:linear-gradient(180deg,#171717 0%,#0f0f10 100%);color:#fff;border:1px solid rgba(255,255,255,.08);box-shadow:0 28px 100px rgba(0,0,0,.45);border-radius:28px;padding:26px 26px 20px;position:relative;overflow:hidden}
 .loading-modal:before{content:'';position:absolute;top:-80px;right:-70px;width:210px;height:210px;border-radius:50%;background:radial-gradient(circle at center,rgba(255,209,0,.3),rgba(255,209,0,.07) 55%,transparent 56%)}
 .loading-head{display:flex;align-items:center;gap:16px;margin-bottom:14px;position:relative;z-index:1}.loading-ring{width:58px;height:58px;border-radius:50%;border:4px solid rgba(255,255,255,.12);border-top-color:#FFD100;border-right-color:#FFD100;animation:spin 1s linear infinite;flex:0 0 auto}
@@ -937,7 +938,7 @@ function transformNovedades(rows,maps){
   return out;
 }
 function showToast(msg,type='warn',ms=5200){const el=byId('dataToast');if(!el)return;el.className='data-toast show '+(type||'warn');el.innerHTML=esc(msg);clearTimeout(showToast._t);if(ms){showToast._t=setTimeout(()=>el.classList.remove('show'),ms)}}
-function setLoading(on){document.body.classList.toggle('loading-data',!!on);['navRefreshBtn','heroRefreshBtn'].forEach(id=>{const el=byId(id);if(el)el.classList.toggle('loading',!!on)});const ov=loaderEl('loadingOverlay');if(ov){if(on)ov.classList.add('show');else if(!ov.classList.contains('fail'))ov.classList.remove('show')}}
+function setLoading(on){document.body.classList.toggle('loading-data',!!on);if(on){closeMultiFilters();toggleDateRangePanel(false)}['navRefreshBtn','heroRefreshBtn'].forEach(id=>{const el=byId(id);if(el)el.classList.toggle('loading',!!on)});const ov=loaderEl('loadingOverlay');if(ov){if(on)ov.classList.add('show');else if(!ov.classList.contains('fail'))ov.classList.remove('show')}}
 function setBodyLoadState(state){document.body.classList.remove('loaded-data','load-error');if(state==='ok')document.body.classList.add('loaded-data');if(state==='err')document.body.classList.add('load-error')}
 function gvizCell(cell){if(!cell)return ''; if(cell.v==null||cell.v==='')return cell.f||''; if(cell.v instanceof Date && !isNaN(cell.v))return cell.v; if(typeof cell.v==='string'&&/^(?:new\s+)?Date\(/i.test(cell.v))return cell.v; return cell.f!=null&&String(cell.f).trim()!==''?cell.f:cell.v}
 function cacheBustUrl(url){const sep=url.includes('?')?'&':'?';return url+sep+'_bi_refresh='+Date.now()}
