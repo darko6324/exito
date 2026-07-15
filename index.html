@@ -897,6 +897,7 @@ function transformBitacora(rows){
   for(const r of rows.slice(startRow)){
     if(!r[0]||!r[4])continue;
     const chain=cleanChain(r[0]);
+    const tipo=classifyFijoAdicional(r[1]);
     const city=cleanCity(r[3]);
     const storeRaw=String(r[4]).trim();
     const store=title(storeRaw);
@@ -905,7 +906,7 @@ function transformBitacora(rows){
     for(const g of groups){
       const reqMoto=num(r[g.c]), reqCarry=num(r[g.c+1]), carro=num(r[g.c+2]), moto=num(r[g.c+3]);
       const sol=reqMoto+reqCarry, col=carro+moto;
-      if(sol>0||col>0){const p=dateParts(g.date);records.push({date:g.date,dia:dayOrder[p.wd],diaCorto:dayShort[p.wd],month:p.month,mes:p.mes,mesCorto:p.mesCorto,chain,city,store,storeKey,sol,col,gap:sol-col,reqMoto,reqCarry,carro,moto})}
+      if(sol>0||col>0){const p=dateParts(g.date);records.push({date:g.date,dia:dayOrder[p.wd],diaCorto:dayShort[p.wd],month:p.month,mes:p.mes,mesCorto:p.mesCorto,chain,city,store,storeKey,tipo,sol,col,gap:sol-col,reqMoto,reqCarry,carro,moto})}
     }
   }
   return {records,groups,storeChain,storeCity,storeDisplay,dateOrder:best.order};
@@ -978,9 +979,9 @@ function multiFilter(id){const values=multiValues(id),selected=[...(MULTI_STATE[
 function matchMulti(filter,value){return filter?.all||!!filter?.values?.includes(value)}
 document.addEventListener('click',e=>{if(!e.target.closest?.('.multi-filter'))closeMultiFilters()});
 function timeBucket(hours){const h=Number(hours||0);if(!h)return 'Sin tiempo';if(h<=1)return '0 - 1 h';if(h<=2)return '1 - 2 h';if(h<=4)return '2 - 4 h';return '4+ h'}
-function initFilters(){if(!BIT.length&&!NOV.length)return;const dates=[...BIT.map(x=>x.date),...NOV.map(x=>x.date)].sort();const min=dates[0], max=dates[dates.length-1];byId('startDate').value=min;byId('endDate').value=max;byId('startDate').min=min;byId('startDate').max=max;byId('endDate').min=min;byId('endDate').max=max;updateDateRangeUI();setOptions('chainFilter',uniq([...BIT.map(x=>x.chain),...NOV.map(x=>x.chain)]),'Todas');setOptions('cityFilter',uniq([...BIT.map(x=>x.city),...NOV.map(x=>x.city)]),'Todas');setOptions('storeFilter',uniq([...BIT.map(x=>x.store),...NOV.map(x=>x.store)]),'Todos');setOptions('typeFilter',uniq(NOV.map(x=>x.tipo)),'Todos');setOptions('solutionFilter',uniq(NOV.map(x=>x.solution)),'Todas');setOptions('timeFilter',['Sin tiempo','0 - 1 h','1 - 2 h','2 - 4 h','4+ h'],'Todos');setOptions('vehicleFilter',['Carry','Moto'],'Todos');setOptions('dayFilter',dayOrder,'Todos')}
+function initFilters(){if(!BIT.length&&!NOV.length)return;const dates=[...BIT.map(x=>x.date),...NOV.map(x=>x.date)].sort();const min=dates[0], max=dates[dates.length-1];byId('startDate').value=min;byId('endDate').value=max;byId('startDate').min=min;byId('startDate').max=max;byId('endDate').min=min;byId('endDate').max=max;updateDateRangeUI();setOptions('chainFilter',uniq([...BIT.map(x=>x.chain),...NOV.map(x=>x.chain)]),'Todas');setOptions('cityFilter',uniq([...BIT.map(x=>x.city),...NOV.map(x=>x.city)]),'Todas');setOptions('storeFilter',uniq([...BIT.map(x=>x.store),...NOV.map(x=>x.store)]),'Todos');setOptions('typeFilter',uniq([...BIT.map(x=>x.tipo),...NOV.map(x=>x.tipo)]),'Todos');setOptions('solutionFilter',uniq(NOV.map(x=>x.solution)),'Todas');setOptions('timeFilter',['Sin tiempo','0 - 1 h','1 - 2 h','2 - 4 h','4+ h'],'Todos');setOptions('vehicleFilter',['Carry','Moto'],'Todos');setOptions('dayFilter',dayOrder,'Todos')}
 function getFilters(){return {start:byId('startDate').value,end:byId('endDate').value,chain:multiFilter('chainFilter'),city:multiFilter('cityFilter'),store:multiFilter('storeFilter'),tipo:multiFilter('typeFilter'),solution:multiFilter('solutionFilter'),time:multiFilter('timeFilter'),vehicle:multiFilter('vehicleFilter'),day:multiFilter('dayFilter')}}
-function bitPass(x,f){return x.date>=f.start&&x.date<=f.end&&matchMulti(f.chain,x.chain)&&matchMulti(f.city,x.city)&&matchMulti(f.store,x.store)&&matchMulti(f.day,x.dia)}
+function bitPass(x,f){return x.date>=f.start&&x.date<=f.end&&matchMulti(f.chain,x.chain)&&matchMulti(f.city,x.city)&&matchMulti(f.store,x.store)&&matchMulti(f.tipo,x.tipo)&&matchMulti(f.day,x.dia)}
 function vehicleBitView(x,vehicle){if(vehicle==='Carry'){const sol=x.reqCarry||0,col=x.carro||0;return {...x,sol,col,gap:sol-col,reqCarry:sol,carro:col,reqMoto:0,moto:0}}if(vehicle==='Moto'){const sol=x.reqMoto||0,col=x.moto||0;return {...x,sol,col,gap:sol-col,reqCarry:0,carro:0,reqMoto:sol,moto:col}}return x}
 function novVehicle(x){return vehicleFromText(x.tipologia,x.inicioTurno,x.cubrimiento,x.fijoAdicionalRaw,x.obs,x.solution,x.tipo)}
 function novPass(x,f){return x.date>=f.start&&x.date<=f.end&&matchMulti(f.chain,x.chain)&&matchMulti(f.city,x.city)&&matchMulti(f.store,x.store)&&matchMulti(f.tipo,x.tipo)&&matchMulti(f.solution,x.solution)&&matchMulti(f.time,timeBucket(x.hours))&&matchMulti(f.vehicle,novVehicle(x))&&matchMulti(f.day,x.dia)}
